@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+data:
+  alerting.rules: |
+    groups:
+    - name: blackbox_exporter_alerts
+      rules:
+      - alert: EndpointDown
+        expr: probe_success{job="blackbox"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Endpoint is down ({{ $labels.instance }})"
+          description: "Endpoint {{ $labels.instance }} is unreachable for more than 1 minute. Check network connectivity or the service itself."
+
+    - name: node_exporter_alerts
+      rules:
+      - alert: HostHighCpuLoad
+        expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU load on host ({{ $labels.instance }})"
+          description: "The host's CPU load is consistently above 80% (current value: {{ $value }}%)."
+
+      - alert: HostOutOfDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} * 100) / node_filesystem_size_bytes{mountpoint="/"} < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space is low on host ({{ $labels.instance }})"
+          description: "The root filesystem on {{ $labels.instance }} has less than 10% disk space left. Current usage: {{ $value }}%."
+
+      - alert: HostOutOfMemory
+        expr: (node_memory_MemAvailable_bytes * 100) / node_memory_MemTotal_bytes < 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host has run out of memory ({{ $labels.instance }})"
+          description: "The host {{ $labels.instance }} has less than 20% memory available. Current available: {{ $value }}%."

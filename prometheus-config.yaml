@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - "/etc/prometheus/rules/alerting.rules"
+
+    scrape_configs:
+      # Scrape Prometheus's own metrics
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Discover and scrape Kubernetes API server endpoints
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          regex: default;kubernetes;https
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_address]
+          target_label: __address__
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+      # Discover and scrape pods that have Prometheus annotations
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          regex: true
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          regex: (.+)
+          target_label: __metrics_path__
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          regex: (.+);(.+)
+          target_label: __address__
+          replacement: $1:$2
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: kubernetes_pod_name
+
+      # Discover and scrape Node Exporter endpoints
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_endpoints_name]
+          regex: 'node-exporter'
+          action: keep
+
+      # Scrape external URLs using Blackbox Exporter with dynamic relabeling
+      - job_name: 'blackbox'
+        metrics_path: /probe
+        static_configs:
+          - targets:
+              - https://google.com
+              - https://bfta-client.dev-submittable.com/health
+              - https://this-domain-does-not-exist-123.com
+              - https://httpstat.us/200
+              - https://httpstat.us/404
+              - https://httpstat.us/500
+              - https://httpstat.us/301
+              - https://httpstat.us/403
+              - https://httpstat.us/503
+              - https://expired.badssl.com/
+              - https://self-signed.badssl.com/
+              - https://wrong.host.badssl.com/
+              - https://tls-v1-0.badssl.com:1010/
+        relabel_configs:
+          # First, use the original __address__ to set the __param_module.
+          # This must be done before the __address__ is rewritten.
+          - source_labels: [__address__]
+            regex: '.*badssl.com.*'
+            target_label: __param_module
+            replacement: http_insecure
+            action: replace
+          
+          - source_labels: [__address__]
+            regex: '.*httpstat.us/.*'
+            target_label: __param_module
+            replacement: http_status
+            action: replace
+
+          # Use 'http_2xx' as the default module if the above regexes don't match.
+          - source_labels: [__address__]
+            target_label: __param_module
+            replacement: http_2xx
+            action: replace
+
+          # Next, pass the original __address__ to the Blackbox Exporter as a target parameter.
+          - source_labels: [__address__]
+            target_label: __param_target
+            action: replace
+          
+          # Use the target parameter as the instance label for a clean display.
+          - source_labels: [__param_target]
+            target_label: instance
+            action: replace
+          
+          # Finally, rewrite the __address__ to point to the Blackbox Exporter.
+          - target_label: __address__
+            replacement: blackbox-exporter:9115
+            action: replace
+
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets:
+          - alertmanager:9093
