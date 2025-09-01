@@ -2,48 +2,73 @@ pipeline {
     agent any
 
     environment {
-        KUBECONFIG = credentials('kubeconfig-id')   // Jenkins credential ID for kubeconfig file
+        KUBECONFIG = credentials('kubeconfig-id')  // Replace with your Jenkins kubeconfig credentials ID
     }
 
     stages {
-        stage('Check Pods') {
+        stage('List Pods') {
             steps {
                 sh '''
-                  echo "=== Checking running pods in default namespace ==="
-                  kubectl get pods -n default
+                  echo "=== All Running Pods in default namespace ==="
+                  kubectl get pods -n default -o wide
                 '''
             }
         }
 
-        stage('Check Configs') {
+        stage('Check Grafana Config') {
             steps {
                 sh '''
-                  echo "=== Checking Grafana Config ==="
-                  kubectl get configmap grafana -n default -o yaml || echo "Grafana config not found"
-
-                  echo "=== Checking Prometheus Config ==="
-                  kubectl get configmap prometheus-server -n default -o yaml || echo "Prometheus config not found"
-
-                  echo "=== Checking Alertmanager Config ==="
-                  kubectl get configmap alertmanager -n default -o yaml || echo "Alertmanager config not found"
+                  if kubectl get pods -n default | grep -i grafana; then
+                      echo "=== Grafana Pod Found ==="
+                      kubectl describe pod -l app=grafana -n default || true
+                      echo "=== Grafana Service Info ==="
+                      kubectl get svc -l app=grafana -n default -o wide || true
+                  else
+                      echo "Grafana not found"
+                  fi
                 '''
             }
         }
 
-        stage('Get Service URLs') {
+        stage('Check Prometheus Config') {
             steps {
                 sh '''
-                  echo "=== Getting Services in default namespace ==="
-                  kubectl get svc -n default
+                  if kubectl get pods -n default | grep -i prometheus; then
+                      echo "=== Prometheus Pod Found ==="
+                      kubectl describe pod -l app=prometheus -n default || true
+                      echo "=== Prometheus Service Info ==="
+                      kubectl get svc -l app=prometheus -n default -o wide || true
+                  else
+                      echo "Prometheus not found"
+                  fi
+                '''
+            }
+        }
 
-                  echo "Grafana URL:"
-                  kubectl get svc grafana -n default -o jsonpath="{.spec.ports[0].nodePort}" || echo "Grafana service not found"
+        stage('Check Alertmanager Config') {
+            steps {
+                sh '''
+                  if kubectl get pods -n default | grep -i alertmanager; then
+                      echo "=== Alertmanager Pod Found ==="
+                      kubectl describe pod -l app=alertmanager -n default || true
+                      echo "=== Alertmanager Service Info ==="
+                      kubectl get svc -l app=alertmanager -n default -o wide || true
+                  else
+                      echo "Alertmanager not found"
+                  fi
+                '''
+            }
+        }
 
-                  echo "Prometheus URL:"
-                  kubectl get svc prometheus-server -n default -o jsonpath="{.spec.ports[0].nodePort}" || echo "Prometheus service not found"
+        stage('Print Access URLs') {
+            steps {
+                sh '''
+                  echo "=== Service Endpoints in default namespace ==="
+                  kubectl get svc -n default -o wide
 
-                  echo "Alertmanager URL:"
-                  kubectl get svc alertmanager -n default -o jsonpath="{.spec.ports[0].nodePort}" || echo "Alertmanager service not found"
+                  echo "If NodePort is exposed, you can access via: http://localhost:<NodePort>"
+                  echo "If ClusterIP only, you need port-forwarding, e.g.:"
+                  echo "kubectl port-forward svc/grafana 3000:3000 -n default"
                 '''
             }
         }
